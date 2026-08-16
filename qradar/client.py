@@ -503,12 +503,62 @@ class QRadarClient:
         reference_set_name: str,
         value: str,
     ) -> dict[str, Any] | None:
+        """
+        Check whether a specific IP exists in a reference set.
+
+        Resolves reference-set NAME -> collection ID and then queries
+        set_entries using collection_id + value.
+        """
         normalized = self.validate_ip(value)
 
-        for entry in self.list_entries(reference_set_name):
-            if str(entry.get("value")) == normalized:
+        refset = self.get_reference_set_by_name(
+            reference_set_name
+        )
+        self._require_ip_set(refset)
+
+        refset_id = int(refset["id"])
+        escaped_value = self._escape_filter_string(normalized)
+
+        self.logger.info(
+            "CHECK: refset=%r id=%s ip=%s",
+            reference_set_name,
+            refset_id,
+            normalized,
+        )
+
+        entries = self._get_all(
+            self.ENTRIES_ENDPOINT,
+            params={
+                "entry_type": "IP",
+                "filter": (
+                    f'collection_id={refset_id} '
+                    f'and value="{escaped_value}"'
+                ),
+                "fields": (
+                    "id,collection_id,value,first_seen,last_seen,"
+                    "source,notes,domain_id"
+                ),
+            },
+        )
+
+        for entry in entries:
+            if (
+                int(entry.get("collection_id", -1)) == refset_id
+                and str(entry.get("value", "")) == normalized
+            ):
+                self.logger.info(
+                    "CHECK result: FOUND refset=%r ip=%s entry_id=%s",
+                    reference_set_name,
+                    normalized,
+                    entry.get("id"),
+                )
                 return entry
 
+        self.logger.info(
+            "CHECK result: NOT_FOUND refset=%r ip=%s",
+            reference_set_name,
+            normalized,
+        )
         return None
 
     def add_ip(
@@ -622,6 +672,27 @@ class QRadarClient:
             "status": "removed",
             "ip": value,
             "entry_id": entry_id,
+        }
+
+    def check_ip(
+        self,
+        reference_set_name: str,
+        ip: str,
+    ) -> dict[str, Any]:
+        """
+        Return structured information about whether an IP exists.
+        """
+        normalized = self.validate_ip(ip)
+        entry = self.get_entry(
+            reference_set_name,
+            normalized,
+        )
+
+        return {
+            "reference_set": reference_set_name,
+            "ip": normalized,
+            "exists": entry is not None,
+            "entry": entry,
         }
 
     def contains_ip(
@@ -747,43 +818,46 @@ class QRadarClient:
         ips = self.parse_ip_input(raw_ips)
 
         self.logger.info(
-            "Bulk CONTAINS requested: refset=%r count=%s",
+            "Bulk CHECK requested: refset=%r count=%s",
             reference_set_name,
             len(ips),
         )
 
         results: list[dict[str, Any]] = []
 
-        for ip in ips:
+        for index, ip in enumerate(ips, start=1):
+            self.logger.info(
+                "Bulk CHECK %s/%s: %s",
+                index,
+                len(ips),
+                ip,
+            )
+
             try:
-                exists = self.contains_ip(
+                result = self.check_ip(
                     reference_set_name,
                     ip,
                 )
             except Exception as exc:
                 self.logger.error(
-                    "Bulk CONTAINS failed: ip=%s error=%s",
+                    "Bulk CHECK failed: ip=%s error=%s",
                     ip,
                     exc,
                 )
                 results.append(
                     {
                         "status": "failed",
+                        "reference_set": reference_set_name,
                         "ip": ip,
                         "error": str(exc),
                     }
                 )
             else:
-                results.append(
-                    {
-                        "status": (
-                            "found"
-                            if exists
-                            else "not_found"
-                        ),
-                        "ip": ip,
-                        "exists": exists,
-                    }
+                result["status"] = (
+                    "found"
+                    if result["exists"]
+                    else "not_found"
                 )
+                results.append(result)
 
         return results

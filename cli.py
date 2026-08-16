@@ -289,13 +289,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_list)
 
-    for command, help_text, func in [
-        ("add", "Add one or many IP addresses", cmd_add),
-        ("remove", "Remove one or many IP addresses", cmd_remove),
-        ("contains", "Check one or many IP addresses", cmd_contains),
+    for command, aliases, help_text, func in [
+        ("add", [], "Add one or many IP addresses", cmd_add),
+        ("remove", ["delete"], "Remove one or many IP addresses", cmd_remove),
+        ("contains", ["check"], "Check one or many IP addresses", cmd_contains),
     ]:
         p = sub.add_parser(
             command,
+            aliases=aliases,
             help=help_text,
         )
         p.add_argument(
