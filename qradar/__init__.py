@@ -1,17 +1,17 @@
 from .client import QRadarClient
 from .exceptions import (
     QRadarError,
-    QRadarAPIError,
     QRadarConfigError,
+    QRadarAPIError,
     QRadarNotFoundError,
 )
+from .logger import setup_logger
 
 __all__ = [
     "QRadarClient",
     "QRadarError",
-    "QRadarAPIError",
     "QRadarConfigError",
+    "QRadarAPIError",
     "QRadarNotFoundError",
+    "setup_logger",
 ]
-
-from .logger import setup_logger

@@ -1,14 +1,11 @@
 class QRadarError(Exception):
-    """Base exception for QRadar CLI."""
-
+    pass
 
 class QRadarConfigError(QRadarError):
-    """Configuration error."""
-
+    pass
 
 class QRadarAPIError(QRadarError):
-    """QRadar REST API error."""
-
+    pass
 
 class QRadarNotFoundError(QRadarAPIError):
-    """Object was not found in QRadar."""
+    pass
