@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -6,226 +5,377 @@ import json
 import sys
 from typing import Any
 
-from qradar import (
-    QRadarAPIError,
-    QRadarClient,
-    QRadarConfigError,
-    QRadarNotFoundError,
-    setup_logger,
-)
+from qradar.client import QRadarClient
+from qradar.logger import setup_logger
 
 
 EXIT_OK = 0
+
+# Used for a single CHECK when the IP
+# does not exist in the Reference Set.
 EXIT_FALSE = 1
+
+# Configuration / API / validation / other error.
 EXIT_ERROR = 2
 
 
-def emit_json(data: Any) -> None:
+# ==============================================================
+# OUTPUT
+# ==============================================================
+
+def emit_json(
+    data: Any,
+) -> None:
+
     print(
         json.dumps(
             data,
-            indent=2,
             ensure_ascii=False,
-            default=str,
+            indent=2,
         )
     )
 
+
+# ==============================================================
+# LIST REFERENCE SETS
+# ==============================================================
 
 def cmd_refsets(
     client: QRadarClient,
     args: argparse.Namespace,
 ) -> int:
-    sets = client.list_reference_sets(
-        ip_only=args.ip_only
+
+    refsets = client.list_reference_sets(
+        ip_only=not args.all_types
     )
 
     if args.output == "json":
-        emit_json(sets)
-    elif args.output == "plain":
-        for item in sets:
-            if item.get("name"):
-                print(item["name"])
-    else:
-        print(
-            f"{'ID':>6}  {'TYPE':<6} "
-            f"{'ENTRIES':>8}  NAME"
+
+        emit_json(
+            refsets
         )
-        for item in sets:
+
+    else:
+
+        for refset in refsets:
+
             print(
-                f"{str(item.get('id', '')):>6}  "
-                f"{str(item.get('entry_type', '')):<6} "
-                f"{str(item.get('number_of_entries', '')):>8}  "
-                f"{item.get('name', '')}"
+                refset.get(
+                    "name",
+                    ""
+                )
             )
 
     return EXIT_OK
 
 
+# ==============================================================
+# JENKINS ACTIVE CHOICES
+# ==============================================================
+
 def cmd_jenkins_refsets(
     client: QRadarClient,
     args: argparse.Namespace,
 ) -> int:
-    for name in client.jenkins_reference_set_names(
-        ip_only=not args.all_types
-    ):
-        print(name)
+
+    names = (
+        client.jenkins_reference_set_names(
+            ip_only=not args.all_types
+        )
+    )
+
+    # IMPORTANT:
+    #
+    # stdout contains ONLY JSON.
+    #
+    # Logger must write to stderr.
+    #
+    # Example:
+    #
+    # [
+    #   "Blocked IPs",
+    #   "IOC_IPs"
+    # ]
+
+    print(
+        json.dumps(
+            names,
+            ensure_ascii=False,
+        )
+    )
 
     return EXIT_OK
 
+
+# ==============================================================
+# LIST IP
+# ==============================================================
 
 def cmd_list(
     client: QRadarClient,
     args: argparse.Namespace,
 ) -> int:
-    entries = client.list_entries(
+
+    ips = client.list_ips(
         args.refset
     )
 
     if args.output == "json":
-        emit_json(entries)
+
+        emit_json(
+            ips
+        )
+
     else:
-        for entry in entries:
-            print(entry.get("value", ""))
+
+        for ip in ips:
+
+            print(ip)
 
     return EXIT_OK
 
 
-def cmd_add(
-    client: QRadarClient,
-    args: argparse.Namespace,
-) -> int:
-    results = client.add_ips(
-        args.refset,
-        args.ip,
-    )
-
-    if args.output == "json":
-        emit_json(results)
-    else:
-        for item in results:
-            status = item.get("status")
-            ip = item.get("ip")
-
-            if status == "added":
-                print(
-                    f"ADDED {ip} -> {args.refset}"
-                )
-            elif status == "exists":
-                print(
-                    f"EXISTS {ip} -> {args.refset}"
-                )
-            else:
-                print(
-                    f"FAILED {ip}: "
-                    f"{item.get('error', 'unknown error')}"
-                )
-
-    return (
-        EXIT_ERROR
-        if any(
-            item.get("status") == "failed"
-            for item in results
-        )
-        else EXIT_OK
-    )
-
-
-def cmd_remove(
-    client: QRadarClient,
-    args: argparse.Namespace,
-) -> int:
-    results = client.remove_ips(
-        args.refset,
-        args.ip,
-    )
-
-    if args.output == "json":
-        emit_json(results)
-    else:
-        for item in results:
-            status = item.get("status")
-            ip = item.get("ip")
-
-            if status == "removed":
-                print(
-                    f"REMOVED {ip} <- {args.refset}"
-                )
-            elif status == "not_found":
-                print(
-                    f"NOT_FOUND {ip} in {args.refset}"
-                )
-            else:
-                print(
-                    f"FAILED {ip}: "
-                    f"{item.get('error', 'unknown error')}"
-                )
-
-    return (
-        EXIT_ERROR
-        if any(
-            item.get("status") == "failed"
-            for item in results
-        )
-        else EXIT_OK
-    )
-
+# ==============================================================
+# CHECK / CONTAINS
+# ==============================================================
 
 def cmd_contains(
     client: QRadarClient,
     args: argparse.Namespace,
 ) -> int:
+
     results = client.contains_ips(
         args.refset,
         args.ip,
     )
 
     if args.output == "json":
-        emit_json(results)
+
+        emit_json(
+            results
+        )
+
     else:
+
         for item in results:
-            if item.get("status") == "failed":
+
+            if item[
+                "status"
+            ] == "failed":
+
                 print(
-                    f"{item.get('ip')}=ERROR:"
-                    f"{item.get('error')}"
+                    f"{item['ip']}="
+                    f"ERROR:"
+                    f"{item.get('error', '')}"
                 )
+
             else:
+
                 print(
-                    f"{item.get('ip')}="
-                    f"{str(bool(item.get('exists'))).lower()}"
+                    f"{item['ip']}="
+                    f"{str(item['exists']).lower()}"
                 )
+
+    # Any technical/API failure causes
+    # Jenkins build failure.
 
     if any(
-        item.get("status") == "failed"
+        item.get(
+            "status"
+        ) == "failed"
         for item in results
     ):
+
         return EXIT_ERROR
 
+    # Single IP:
+    #
+    # 0 = found
+    # 1 = not found
+
     if len(results) == 1:
+
         return (
             EXIT_OK
-            if results[0].get("exists")
+            if results[0]["exists"]
             else EXIT_FALSE
         )
+
+    # Multiple IP addresses:
+    #
+    # 0 means all checks completed successfully.
+    #
+    # true/false for individual IPs is available
+    # in stdout.
 
     return EXIT_OK
 
 
+# ==============================================================
+# ADD
+# ==============================================================
+
+def cmd_add(
+    client: QRadarClient,
+    args: argparse.Namespace,
+) -> int:
+
+    results = client.add_ips(
+        args.refset,
+        args.ip,
+    )
+
+    if args.output == "json":
+
+        emit_json(
+            results
+        )
+
+    else:
+
+        for item in results:
+
+            status = item.get(
+                "status"
+            )
+
+            ip = item.get(
+                "ip",
+                "",
+            )
+
+            if status == "added":
+
+                print(
+                    f"ADDED {ip}"
+                )
+
+            elif status == "exists":
+
+                print(
+                    f"EXISTS {ip}"
+                )
+
+            elif status == "failed":
+
+                print(
+                    f"FAILED {ip}: "
+                    f"{item.get('error', '')}"
+                )
+
+            else:
+
+                print(
+                    f"{status} {ip}"
+                )
+
+    if any(
+        item.get(
+            "status"
+        ) == "failed"
+        for item in results
+    ):
+
+        return EXIT_ERROR
+
+    return EXIT_OK
+
+
+# ==============================================================
+# REMOVE
+# ==============================================================
+
+def cmd_remove(
+    client: QRadarClient,
+    args: argparse.Namespace,
+) -> int:
+
+    results = client.remove_ips(
+        args.refset,
+        args.ip,
+    )
+
+    if args.output == "json":
+
+        emit_json(
+            results
+        )
+
+    else:
+
+        for item in results:
+
+            status = item.get(
+                "status"
+            )
+
+            ip = item.get(
+                "ip",
+                "",
+            )
+
+            if status == "removed":
+
+                print(
+                    f"REMOVED {ip}"
+                )
+
+            elif status == "not_found":
+
+                print(
+                    f"NOT_FOUND {ip}"
+                )
+
+            elif status == "failed":
+
+                print(
+                    f"FAILED {ip}: "
+                    f"{item.get('error', '')}"
+                )
+
+            else:
+
+                print(
+                    f"{status} {ip}"
+                )
+
+    if any(
+        item.get(
+            "status"
+        ) == "failed"
+        for item in results
+    ):
+
+        return EXIT_ERROR
+
+    return EXIT_OK
+
+
+# ==============================================================
+# ARGUMENT PARSER
+# ==============================================================
+
 def build_parser() -> argparse.ArgumentParser:
+
     parser = argparse.ArgumentParser(
         description=(
-            "Manage QRadar IP reference sets via "
-            "reference_data_collections API"
+            "QRadar Reference Set CLI "
+            "for REST API 16+"
         )
     )
 
     parser.add_argument(
         "--config",
         default="config.ini",
-        help="Path to config.ini",
+        help=(
+            "Path to config.ini "
+            "(default: config.ini)"
+        ),
     )
 
     parser.add_argument(
         "--log-level",
+        default="INFO",
         choices=[
             "DEBUG",
             "INFO",
@@ -233,13 +383,31 @@ def build_parser() -> argparse.ArgumentParser:
             "ERROR",
             "CRITICAL",
         ],
-        default="INFO",
+        help=(
+            "Logging level "
+            "(default: INFO)"
+        ),
     )
 
     parser.add_argument(
         "--log-file",
         default=None,
-        help="Optional log file",
+        help=(
+            "Optional log file"
+        ),
+    )
+
+    parser.add_argument(
+        "--output",
+        choices=[
+            "text",
+            "json",
+        ],
+        default="text",
+        help=(
+            "Output format "
+            "(default: text)"
+        ),
     )
 
     sub = parser.add_subparsers(
@@ -247,130 +415,246 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
 
-    p = sub.add_parser(
-        "refsets",
-        help="List reference sets",
-    )
-    p.add_argument(
-        "--ip-only",
-        action="store_true",
-    )
-    p.add_argument(
-        "--output",
-        choices=("table", "plain", "json"),
-        default="table",
-    )
-    p.set_defaults(func=cmd_refsets)
+    # ----------------------------------------------------------
+    # refsets
+    # ----------------------------------------------------------
 
-    p = sub.add_parser(
-        "jenkins-refsets",
-        help="Print names only for Jenkins Active Choices",
+    p_refsets = sub.add_parser(
+        "refsets",
+        help=(
+            "List Reference Sets"
+        ),
     )
-    p.add_argument(
+
+    p_refsets.add_argument(
         "--all-types",
         action="store_true",
-        help="Include non-IP reference sets",
+        help=(
+            "Include non-IP Reference Sets"
+        ),
     )
-    p.set_defaults(func=cmd_jenkins_refsets)
 
-    p = sub.add_parser(
-        "list",
-        help="List IP addresses in a reference set",
+    p_refsets.set_defaults(
+        func=cmd_refsets
     )
-    p.add_argument(
+
+    # ----------------------------------------------------------
+    # jenkins-refsets
+    # ----------------------------------------------------------
+
+    p_jenkins = sub.add_parser(
+        "jenkins-refsets",
+        help=(
+            "Return Reference Set names "
+            "as JSON array for Jenkins "
+            "Active Choices"
+        ),
+    )
+
+    p_jenkins.add_argument(
+        "--all-types",
+        action="store_true",
+        help=(
+            "Include non-IP Reference Sets"
+        ),
+    )
+
+    p_jenkins.set_defaults(
+        func=cmd_jenkins_refsets
+    )
+
+    # ----------------------------------------------------------
+    # list
+    # ----------------------------------------------------------
+
+    p_list = sub.add_parser(
+        "list",
+        aliases=[
+            "list-ips",
+        ],
+        help=(
+            "List all IP addresses "
+            "from Reference Set"
+        ),
+    )
+
+    p_list.add_argument(
         "--refset",
         required=True,
-        help="Reference set name",
+        help=(
+            "Reference Set name"
+        ),
     )
-    p.add_argument(
-        "--output",
-        choices=("plain", "json"),
-        default="plain",
-    )
-    p.set_defaults(func=cmd_list)
 
-    for command, aliases, help_text, func in [
-        ("add", [], "Add one or many IP addresses", cmd_add),
-        ("remove", ["delete"], "Remove one or many IP addresses", cmd_remove),
-        ("contains", ["check"], "Check one or many IP addresses", cmd_contains),
-    ]:
-        p = sub.add_parser(
-            command,
-            aliases=aliases,
-            help=help_text,
-        )
-        p.add_argument(
-            "--refset",
-            required=True,
-            help="Reference set name",
-        )
-        p.add_argument(
-            "--ip",
-            required=True,
-            help=(
-                "One IP or multiple IPs separated "
-                "by commas and/or new lines"
-            ),
-        )
-        p.add_argument(
-            "--output",
-            choices=("plain", "json"),
-            default="plain",
-        )
-        p.set_defaults(func=func)
+    p_list.set_defaults(
+        func=cmd_list
+    )
+
+    # ----------------------------------------------------------
+    # contains / check
+    # ----------------------------------------------------------
+
+    p_contains = sub.add_parser(
+        "contains",
+        aliases=[
+            "check",
+        ],
+        help=(
+            "Check one or many IP addresses"
+        ),
+    )
+
+    p_contains.add_argument(
+        "--refset",
+        required=True,
+        help=(
+            "Reference Set name"
+        ),
+    )
+
+    p_contains.add_argument(
+        "--ip",
+        required=True,
+        help=(
+            "One or many IP addresses. "
+            "Separate with commas or new lines."
+        ),
+    )
+
+    p_contains.set_defaults(
+        func=cmd_contains
+    )
+
+    # ----------------------------------------------------------
+    # add
+    # ----------------------------------------------------------
+
+    p_add = sub.add_parser(
+        "add",
+        aliases=[
+            "add-ip",
+        ],
+        help=(
+            "Add one or many IP addresses"
+        ),
+    )
+
+    p_add.add_argument(
+        "--refset",
+        required=True,
+        help=(
+            "Reference Set name"
+        ),
+    )
+
+    p_add.add_argument(
+        "--ip",
+        required=True,
+        help=(
+            "One or many IP addresses. "
+            "Separate with commas or new lines."
+        ),
+    )
+
+    p_add.set_defaults(
+        func=cmd_add
+    )
+
+    # ----------------------------------------------------------
+    # remove
+    # ----------------------------------------------------------
+
+    p_remove = sub.add_parser(
+        "remove",
+        aliases=[
+            "delete",
+            "remove-ip",
+        ],
+        help=(
+            "Remove one or many IP addresses"
+        ),
+    )
+
+    p_remove.add_argument(
+        "--refset",
+        required=True,
+        help=(
+            "Reference Set name"
+        ),
+    )
+
+    p_remove.add_argument(
+        "--ip",
+        required=True,
+        help=(
+            "One or many IP addresses. "
+            "Separate with commas or new lines."
+        ),
+    )
+
+    p_remove.set_defaults(
+        func=cmd_remove
+    )
 
     return parser
 
 
+# ==============================================================
+# MAIN
+# ==============================================================
+
 def main() -> int:
-    args = build_parser().parse_args()
+
+    parser = build_parser()
+
+    args = parser.parse_args()
 
     logger = setup_logger(
         level=args.log_level,
         log_file=args.log_file,
     )
 
-    logger.info(
-        "Starting command: %s",
-        args.command,
-    )
-
     try:
+
         client = QRadarClient(
-            args.config,
+            config_file=args.config,
             logger=logger,
         )
 
-        exit_code = int(
-            args.func(client, args)
+        return args.func(
+            client,
+            args,
         )
-
-        logger.info(
-            "Command finished: %s exit_code=%s",
-            args.command,
-            exit_code,
-        )
-
-        return exit_code
-
-    except (
-        QRadarAPIError,
-        QRadarConfigError,
-        QRadarNotFoundError,
-        FileNotFoundError,
-        ValueError,
-    ) as exc:
-        logger.error("%s", exc)
-        print(
-            f"ERROR: {exc}",
-            file=sys.stderr,
-        )
-        return EXIT_ERROR
 
     except KeyboardInterrupt:
-        logger.warning("Interrupted")
+
+        logger.warning(
+            "Interrupted by user"
+        )
+
         return 130
+
+    except ValueError as exc:
+
+        logger.error(
+            "Validation error: %s",
+            exc,
+        )
+
+        return EXIT_ERROR
+
+    except Exception as exc:
+
+        logger.exception(
+            "Command failed: %s",
+            exc,
+        )
+
+        return EXIT_ERROR
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+
+    sys.exit(
+        main()
+    )
